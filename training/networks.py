@@ -485,8 +485,12 @@ class Generator(torch.nn.Module):
         synthesis_kwargs    = {},   # Arguments for SynthesisNetwork.
     ):
         super().__init__()
+        print('latent_dim {}'.format(z_dim))
         self.z_dim = z_dim
         self.c_dim = c_dim
+        # print("c dim")
+        # print(c_dim)
+        # exit()
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_channels = img_channels
@@ -686,14 +690,19 @@ class Discriminator(torch.nn.Module):
         epilogue_kwargs     = {},       # Arguments for DiscriminatorEpilogue.
     ):
         super().__init__()
-        self.c_dim = c_dim
+        # print(c_dim)
+        # exit()
+        c_dim = 0
+        self.c_dim = 0
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
         self.img_channels = img_channels
         self.block_resolutions = [2 ** i for i in range(self.img_resolution_log2, 2, -1)]
         channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions + [4]}
         fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)
-
+        # print(cmap_dim)
+        # exit()
+        # cmap_dim = None
         if cmap_dim is None:
             cmap_dim = channels_dict[4]
         if c_dim == 0:

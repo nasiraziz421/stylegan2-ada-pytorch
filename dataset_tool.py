@@ -69,7 +69,11 @@ def open_image_folder(source_dir, *, max_images: Optional[int]):
         for idx, fname in enumerate(input_images):
             arch_fname = os.path.relpath(fname, source_dir)
             arch_fname = arch_fname.replace('\\', '/')
-            img = np.array(PIL.Image.open(fname))
+            try:
+                img = np.array(PIL.Image.open(fname))
+            except:
+                img = None
+                
             yield dict(img=img, label=labels.get(arch_fname))
             if idx >= max_idx-1:
                 break
@@ -397,6 +401,8 @@ def convert_dataset(
         archive_fname = f'{idx_str[:5]}/img{idx_str}.png'
 
         # Apply crop and resize.
+        if image['img'] is None:
+            continue
         img = transform_image(image['img'])
 
         # Transform may drop images.
@@ -405,7 +411,14 @@ def convert_dataset(
 
         # Error check to require uniform image attributes across
         # the whole dataset.
+        
         channels = img.shape[2] if img.ndim == 3 else 1
+        # print(channels)
+        if channels == 4:
+            channels = 3
+        if channels == 1 or channels == 2:
+            continue
+        
         cur_image_attrs = {
             'width': img.shape[1],
             'height': img.shape[0],

@@ -261,7 +261,13 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
         images = []
         for _i in range(batch_size // batch_gen):
             z = torch.randn([batch_gen, G.z_dim], device=opts.device)
-            c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
+            def create_pos():
+                n=4
+                position = np.zeros(n)
+                position[np.random.randint(n)]=1
+                return position
+            c = [create_pos() for _i in range(batch_gen)]
+            # c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
             images.append(run_generator(z, c))
         images = torch.cat(images)

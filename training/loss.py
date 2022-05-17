@@ -55,11 +55,72 @@ class StyleGAN2Loss(Loss):
         return logits
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
-        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth','Gl1']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
+        
+        do_Gl1 = (phase in ['Gl1'])
+        
+        if do_Gl1:
+            # print("do gl1 yeah")
+            # print(gen_z.shape)
+            # print("--"*8)
+            def create_pos(k):
+                n=4
+                position = np.zeros(n)
+                position[k]=1
+                return position
+            
+            gen_c0 = [create_pos(0) for _ in range(len(gen_c))]
+            gen_c1 = [create_pos(1) for _ in range(len(gen_c))]
+            gen_c2 = [create_pos(2) for _ in range(len(gen_c))]
+            gen_c3 = [create_pos(3) for _ in range(len(gen_c))]
+            
+            gen_c0 = torch.from_numpy(np.stack(gen_c0)).pin_memory().to(gen_c.device)
+            gen_c1 = torch.from_numpy(np.stack(gen_c1)).pin_memory().to(gen_c.device)
+            gen_c2 = torch.from_numpy(np.stack(gen_c2)).pin_memory().to(gen_c.device)
+            gen_c3 = torch.from_numpy(np.stack(gen_c3)).pin_memory().to(gen_c.device)
+            with torch.autograd.profiler.record_function('Gl1_forward'):
+                # print(sync and not do_Gpl)
+                gen_img0, _gen_ws0 = self.run_G(gen_z, gen_c0, sync=(sync and not do_Gpl))
+                gen_img1, _gen_ws1 = self.run_G(gen_z, gen_c1, sync=(sync and not do_Gpl))
+                gen_img2, _gen_ws2 = self.run_G(gen_z, gen_c2, sync=(sync and not do_Gpl))
+                gen_img3, _gen_ws3 = self.run_G(gen_z, gen_c3, sync=(sync and not do_Gpl))
+                
+                patch2_I0 = gen_img0[:,:,:32,32:64]
+                patch5_I0 = gen_img0[:,:,32:64,32:64]
+                patch4_I0 = gen_img0[:,:,32:64,:32]
+                
+                patch2_I1 = gen_img1[:,:,:32,:32]
+                patch5_I1 = gen_img1[:,:,32:64,:32]
+                patch6_I1 = gen_img1[:,:,32:64,32:64]
+                
+                patch4_I2 = gen_img2[:,:,:32,:32]
+                patch5_I2 = gen_img2[:,:,:32,32:64]
+                patch8_I2 = gen_img2[:,:,32:64,32:64]
+                
+                patch5_I3 = gen_img3[:,:,:32,:32]
+                patch6_I3 = gen_img3[:,:,:32,32:64]
+                patch8_I3 = gen_img3[:,:,32:64,:32]
+                
+                loss_patch2 = (patch2_I0-patch2_I1).abs().mean()
+                loss_patch4 = (patch4_I0-patch4_I2).abs().mean()
+                loss_patch5 = (patch5_I0-patch5_I1).abs().mean()+(patch5_I2-patch5_I3).abs().mean()+(patch5_I1-patch5_I2).abs().mean()
+                loss_patch6 = (patch6_I1-patch6_I3).abs().mean()
+                loss_patch8 = (patch8_I2-patch8_I3).abs().mean()
+                loss = (loss_patch2+loss_patch4+loss_patch5+loss_patch6+loss_patch8)/5000
+                # print(loss)
+                training_stats.report('Loss/G/loss_patch2', loss_patch2)
+                training_stats.report('Loss/G/loss_l1', loss)
+            with torch.autograd.profiler.record_function('Gl1_backward'):
+                loss.mul(gain).backward()
+                # exit()
+                
+                
+                # print(patch2.shape)
+            # exit()
 
         # Gmain: Maximize logits for generated images.
         if do_Gmain:

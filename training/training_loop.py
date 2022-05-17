@@ -146,7 +146,12 @@ def training_loop(
     # Construct networks.
     if rank == 0:
         print('Constructing networks...')
-    common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
+    # common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
+    common_kwargs = dict(c_dim=4, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
+    
+    # print(common_kwargs)
+    # print(G_kwargs)
+    # exit()
     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     G_ema = copy.deepcopy(G).eval()
@@ -198,6 +203,7 @@ def training_loop(
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
+            print('this')
         else: # Lazy regularization.
             mb_ratio = reg_interval / (reg_interval + 1)
             opt_kwargs = dnnlib.EasyDict(opt_kwargs)
@@ -206,6 +212,16 @@ def training_loop(
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
+    
+    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval)]:
+            opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+            phases += [dnnlib.EasyDict(name=name+'l1', module=module, opt=opt, interval=4)]
+            # print('this')
+            # print(phases[-1])
+    
+    # for i in range(len(phases)):
+    #     print(phases[i]['name'])
+    # exit()
     for phase in phases:
         phase.start_event = None
         phase.end_event = None
@@ -222,7 +238,12 @@ def training_loop(
         grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
+        # print(grid_z)
+        labels = np.random.randint(2, size=(1024,4))
+        # print(labels.shape)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
+        # print(grid_c)
+        # exit()
         images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
 
@@ -262,13 +283,23 @@ def training_loop(
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
             all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
-            all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
+            
+            # all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
+            def create_pos():
+                n=4
+                position = np.zeros(n)
+                position[np.random.randint(n)]=1
+                return position
+            all_gen_c = [create_pos() for _ in range(len(phases) * batch_size)]
+            
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
 
         # Execute training phases.
         for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):
+            # print(phase.name)
             if batch_idx % phase.interval != 0:
+                # print(phase.name)
                 continue
 
             # Initialize gradient accumulation.
@@ -284,6 +315,14 @@ def training_loop(
                 loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
 
             # Update weights.
+            # print(phase.name)
+            # if phase.name == 'Gl1':
+            #     for params in phase.module.parameters():
+            #         print(params)
+            #         # print(params.grad)
+            #         # veccc1 = params
+            #         break
+            # print(phase.module)
             phase.module.requires_grad_(False)
             with torch.autograd.profiler.record_function(phase.name + '_opt'):
                 for param in phase.module.parameters():
@@ -293,6 +332,13 @@ def training_loop(
             if phase.end_event is not None:
                 phase.end_event.record(torch.cuda.current_stream(device))
 
+            # if phase.name == 'Gl1':
+            #     # print(phase.module.parameters())
+            #     for params in phase.module.parameters():
+            #         print(params)
+            #         # print(veccc1-params)
+                    
+            #         break
         # Update G_ema.
         with torch.autograd.profiler.record_function('Gema'):
             ema_nimg = ema_kimg * 1000
