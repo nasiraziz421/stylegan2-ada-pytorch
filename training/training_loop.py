@@ -206,6 +206,16 @@ def training_loop(
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
+    
+    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval)]:
+        
+        opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+        phases += [dnnlib.EasyDict(name=name+'l1', module=module, opt=opt, interval=4)]
+    
+    # for phase in phases:
+    #     print(phase.name)
+    # exit()
+    
     for phase in phases:
         phase.start_event = None
         phase.end_event = None
@@ -261,6 +271,19 @@ def training_loop(
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
+            # print(all_gen_z)
+            def create_positions(position):
+                positions = np.eye(4)
+                return positions[position]
+            z_append = [create_positions(np.random.randint(4)) for _ in range(len(phases) * batch_size)]
+            z_append = torch.from_numpy(np.stack(z_append)).pin_memory().to(device)
+            # print(z_append)
+            # print(z_append.shape)
+            all_gen_z[:,-4:] = z_append[:,:]
+            # print(all_gen_z)
+            # print(all_gen_z.shape)
+            # print(all_gen_z[0,-10:])
+            # exit()
             all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
             all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)

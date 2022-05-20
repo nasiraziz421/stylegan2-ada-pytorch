@@ -55,12 +55,75 @@ class StyleGAN2Loss(Loss):
         return logits
 
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
-        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth','Gl1']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
-
+        
+        do_Gl1 = (phase in [ 'Gl1'])
+        
+        if do_Gl1:
+            # print(phase)
+            with torch.autograd.profiler.record_function('Gl1_forward'):
+                gen_z1 = gen_z
+                gen_z2 = torch.clone(gen_z)
+                gen_z3 = torch.clone(gen_z)
+                gen_z4 = torch.clone(gen_z)
+                def create_positions(position):
+                    positions = np.eye(4)
+                    return positions[position]
+                z_append1 = [create_positions(0) for _ in range(gen_z.shape[0])]
+                z_append1 = torch.from_numpy(np.stack(z_append1)).pin_memory().to(gen_z.device)
+                
+                z_append2 = [create_positions(1) for _ in range(gen_z.shape[0])]
+                z_append2 = torch.from_numpy(np.stack(z_append2)).pin_memory().to(gen_z.device)
+                
+                z_append3 = [create_positions(2) for _ in range(gen_z.shape[0])]
+                z_append3 = torch.from_numpy(np.stack(z_append3)).pin_memory().to(gen_z.device)
+                
+                z_append4 = [create_positions(3) for _ in range(gen_z.shape[0])]
+                z_append4 = torch.from_numpy(np.stack(z_append4)).pin_memory().to(gen_z.device)
+            # print(z_append)
+            # print(z_append.shape)
+                gen_z1[:,-4:] = z_append1[:,:]
+                gen_z2[:,-4:] = z_append2[:,:]
+                gen_z3[:,-4:] = z_append3[:,:]
+                gen_z4[:,-4:] = z_append4[:,:]
+                
+                gen_img1, _gen_ws = self.run_G(gen_z1, gen_c, sync=(sync and not do_Gpl))
+                gen_img2, _gen_ws = self.run_G(gen_z2, gen_c, sync=(sync and not do_Gpl))
+                gen_img3, _gen_ws = self.run_G(gen_z3, gen_c, sync=(sync and not do_Gpl))
+                gen_img4, _gen_ws = self.run_G(gen_z4, gen_c, sync=(sync and not do_Gpl))
+                
+                patch2_I1 = gen_img1[:,:,:32,32:64]
+                patch5_I1 = gen_img1[:,:,32:64,32:64]
+                patch4_I1 = gen_img1[:,:,32:64,:32]
+                
+                patch2_I2 = gen_img2[:,:,:32,:32]
+                patch5_I2 = gen_img2[:,:,32:64,:32]
+                patch6_I2 = gen_img2[:,:,32:64,32:64]
+                
+                patch4_I3 = gen_img3[:,:,:32,:32]
+                patch5_I3 = gen_img3[:,:,:32,32:64]
+                patch8_I3 = gen_img3[:,:,32:64,32:64]
+                
+                patch5_I4 = gen_img4[:,:,:32,:32]
+                patch6_I4 = gen_img4[:,:,:32,32:64]
+                patch8_I4 = gen_img4[:,:,32:64,:32]
+                
+                patch2_loss = (patch2_I1-patch2_I2).abs().mean()
+                patch4_loss = (patch4_I3-patch4_I1).abs().mean()
+                patch5_loss = (patch5_I1-patch5_I2).abs().mean()+(patch5_I3-patch5_I4).abs().mean()+(patch5_I2-patch5_I3).abs().mean()
+                patch6_loss = (patch6_I2-patch6_I4).abs().mean()
+                patch8_loss = (patch8_I3-patch8_I4).abs().mean()
+                c_patch_loss = (patch2_loss+patch4_loss+patch5_loss+patch6_loss+patch8_loss)/50000
+                
+                training_stats.report('Loss/Gl1', c_patch_loss)
+                # print(c_patch_loss)
+            with torch.autograd.profiler.record_function('Gl1_backward'):
+                c_patch_loss.backward()
+                # exit()
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
             with torch.autograd.profiler.record_function('Gmain_forward'):
